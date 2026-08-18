@@ -1,0 +1,317 @@
+# PATCH: input-lock (infomator-kernel-input-lock)
+# Locks human (OS/view-layer) input while keeping CDP Input.* working.
+# Agent usage: Input.setUserInputLocked({locked: true|false})
+# Do not use Input.setIgnoreInputEvents -- that also drops CDP input.
+# Applies after ungoogled + fingerprint + windows patches, before domain substitution.
+
+diff --git a/content/browser/devtools/protocol/input_handler.cc b/content/browser/devtools/protocol/input_handler.cc
+index c78943bf0f..e31d4876e9 100644
+--- a/content/browser/devtools/protocol/input_handler.cc
++++ b/content/browser/devtools/protocol/input_handler.cc
+@@ -2035,6 +2035,15 @@ Response InputHandler::SetIgnoreInputEvents(bool ignore) {
+   return Response::Success();
+ }
+ 
++// PATCH: input-lock
++Response InputHandler::SetUserInputLocked(bool locked) {
++  if (!web_contents_) {
++    return Response::InternalError();
++  }
++  web_contents_->SetUserInputLocked(locked);
++  return Response::Success();
++}
++
++void InputHandler::SynthesizePinchGesture(
++    double x,
++    double y,
+diff --git a/content/browser/devtools/protocol/input_handler.h b/content/browser/devtools/protocol/input_handler.h
+index 4c25a8c1c2..d4b8dbaf56 100644
+--- a/content/browser/devtools/protocol/input_handler.h
++++ b/content/browser/devtools/protocol/input_handler.h
+@@ -154,6 +154,8 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
+                                       std::optional<int> click_count) override;
+ 
+   Response SetIgnoreInputEvents(bool ignore) override;
++  // PATCH: input-lock
++  Response SetUserInputLocked(bool locked) override;
+   Response SetInterceptDrags(bool enabled) override;
+ 
+   void SynthesizePinchGesture(
+diff --git a/content/browser/renderer_host/render_widget_host_delegate.cc b/content/browser/renderer_host/render_widget_host_delegate.cc
+index 74fea36ea7..14a8459229 100644
+--- a/content/browser/renderer_host/render_widget_host_delegate.cc
++++ b/content/browser/renderer_host/render_widget_host_delegate.cc
+@@ -42,6 +42,10 @@ bool RenderWidgetHostDelegate::ShouldIgnoreInputEvents() {
+   return false;
+ }
+ 
++bool RenderWidgetHostDelegate::IsUserInputLocked() {
++  return false;
++}
++
+ bool RenderWidgetHostDelegate::PreHandleGestureEvent(
+     const blink::WebGestureEvent& event) {
+   return false;
+diff --git a/content/browser/renderer_host/render_widget_host_delegate.h b/content/browser/renderer_host/render_widget_host_delegate.h
+index 9a4195a3e5..8cd200756d 100644
+--- a/content/browser/renderer_host/render_widget_host_delegate.h
++++ b/content/browser/renderer_host/render_widget_host_delegate.h
+@@ -132,6 +132,11 @@ class CONTENT_EXPORT RenderWidgetHostDelegate {
+   virtual bool ShouldIgnoreWebInputEvents(const blink::WebInputEvent& event);
+   virtual bool ShouldIgnoreInputEvents();
+ 
++  // PATCH: input-lock -- true when human (OS/view) input should be dropped
++  // while CDP-injected input continues to work. Unlike ShouldIgnoreInputEvents,
++  // this is checked only at the platform view layer, which CDP never enters.
++  virtual bool IsUserInputLocked();
++
+   // Callback to give the browser a chance to handle the specified gesture
+   // event before sending it to the renderer.
+   // Returns true if the |event| was handled.
+diff --git a/content/browser/renderer_host/render_widget_host_view_aura.cc b/content/browser/renderer_host/render_widget_host_view_aura.cc
+index 63a7dc99a9..3003d2af66 100644
+--- a/content/browser/renderer_host/render_widget_host_view_aura.cc
++++ b/content/browser/renderer_host/render_widget_host_view_aura.cc
+@@ -201,6 +201,11 @@ bool ShouldSubstituteArabicDigits() {
+          arabic_digit_sub_state.is_digit_sub_feature_enabled;
+ }
+ #endif  // BUILDFLAG(IS_WIN)
++
++// PATCH: input-lock -- human-originated input only; CDP never reaches Aura.
++bool ShouldDropUserInput(RenderWidgetHostImpl* host) {
++  return host && host->delegate() && host->delegate()->IsUserInputLocked();
++}
+ }  // namespace
+ 
+ #if BUILDFLAG(IS_WIN)
+@@ -1457,6 +1462,10 @@ base::WeakPtr<ui::TextInputClient> RenderWidgetHostViewAura::AsWeakPtr() {
+ 
+ void RenderWidgetHostViewAura::SetCompositionText(
+     const ui::CompositionText& composition) {
++  // PATCH: input-lock
++  if (ShouldDropUserInput(host())) {
++    return;
++  }
+   if (!text_input_manager_ || !text_input_manager_->GetActiveWidget())
+     return;
+ 
+@@ -1471,6 +1480,11 @@ void RenderWidgetHostViewAura::SetCompositionText(
+ }
+ 
+ size_t RenderWidgetHostViewAura::ConfirmCompositionText(bool keep_selection) {
++  // PATCH: input-lock -- cancel rather than commit if locked mid-IME.
++  if (ShouldDropUserInput(host())) {
++    ClearCompositionText();
++    return 0;
++  }
+   if (text_input_manager_ && text_input_manager_->GetActiveWidget() &&
+       has_composition_text_) {
+     text_input_manager_->GetActiveWidget()->ImeFinishComposingText(
+@@ -1494,6 +1508,11 @@ void RenderWidgetHostViewAura::InsertText(
+     InsertTextCursorBehavior cursor_behavior) {
+   CHECK_NE(GetTextInputType(), ui::TEXT_INPUT_TYPE_NONE);
+ 
++  // PATCH: input-lock
++  if (ShouldDropUserInput(host())) {
++    return;
++  }
++
+   if (text_input_manager_ && text_input_manager_->GetActiveWidget()) {
+     const int relative_cursor_position =
+         cursor_behavior == InsertTextCursorBehavior::kMoveCursorBeforeText
+@@ -1507,6 +1526,10 @@ void RenderWidgetHostViewAura::InsertText(
+ }
+ 
+ void RenderWidgetHostViewAura::InsertChar(const ui::KeyEvent& event) {
++  // PATCH: input-lock
++  if (ShouldDropUserInput(host())) {
++    return;
++  }
+   if (popup_child_host_view_ && popup_child_host_view_->NeedsInputGrab()) {
+     popup_child_host_view_->InsertChar(event);
+     return;
+@@ -2343,11 +2366,21 @@ bool RenderWidgetHostViewAura::RequiresDoubleTapGestureEvents() const {
+ // RenderWidgetHostViewAura, ui::EventHandler implementation:
+ 
+ void RenderWidgetHostViewAura::OnKeyEvent(ui::KeyEvent* event) {
++  // PATCH: input-lock
++  if (ShouldDropUserInput(host())) {
++    event->SetHandled();
++    return;
++  }
+   last_pointer_type_ = ui::EventPointerType::kUnknown;
+   event_handler_->OnKeyEvent(event);
+ }
+ 
+ void RenderWidgetHostViewAura::OnMouseEvent(ui::MouseEvent* event) {
++  // PATCH: input-lock -- includes move/enter/exit (hover) and mouse wheel.
++  if (ShouldDropUserInput(host())) {
++    event->SetHandled();
++    return;
++  }
+ #if BUILDFLAG(IS_WIN)
+   if (event->type() == ui::EventType::kMouseMoved) {
+     if (event->location() == last_mouse_move_location_ &&
+@@ -2531,10 +2564,20 @@ void RenderWidgetHostViewAura::OnFocusHandwritingTarget(
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+ void RenderWidgetHostViewAura::OnScrollEvent(ui::ScrollEvent* event) {
++  // PATCH: input-lock
++  if (ShouldDropUserInput(host())) {
++    event->SetHandled();
++    return;
++  }
+   event_handler_->OnScrollEvent(event);
+ }
+ 
+ void RenderWidgetHostViewAura::OnTouchEvent(ui::TouchEvent* event) {
++  // PATCH: input-lock
++  if (ShouldDropUserInput(host())) {
++    event->SetHandled();
++    return;
++  }
+   last_pointer_type_ = event->pointer_details().pointer_type;
+ 
+ #if BUILDFLAG(IS_WIN)
+@@ -2575,6 +2618,11 @@ void RenderWidgetHostViewAura::OnTouchEvent(ui::TouchEvent* event) {
+ }
+ 
+ void RenderWidgetHostViewAura::OnGestureEvent(ui::GestureEvent* event) {
++  // PATCH: input-lock
++  if (ShouldDropUserInput(host())) {
++    event->SetHandled();
++    return;
++  }
+   last_pointer_type_ = event->details().primary_pointer_type();
+   event_handler_->OnGestureEvent(event);
+ }
+diff --git a/content/browser/web_contents/web_contents_impl.h b/content/browser/web_contents/web_contents_impl.h
+index 0611c1f135..17e75d2a60 100644
+--- a/content/browser/web_contents/web_contents_impl.h
++++ b/content/browser/web_contents/web_contents_impl.h
+@@ -646,6 +646,10 @@ class CONTENT_EXPORT WebContentsImpl
+       bool should_ignore_a11y_input) override;
+   bool ShouldIgnoreInputEventsForTesting() override;
+   bool ShouldIgnoreA11yInputEventsForTesting() override;
++  // PATCH: input-lock -- per-tab flag; survives navigation. CDP input is
++  // not affected because it never enters the platform view layer.
++  void SetUserInputLocked(bool locked);
++  bool user_input_locked() const { return user_input_locked_; }
+   bool HasActiveEffectivelyFullscreenVideo() override;
+   void WriteIntoTrace(perfetto::TracedValue context) override;
+   const base::Location& GetCreatorLocation() override;
+@@ -974,6 +978,8 @@ class CONTENT_EXPORT WebContentsImpl
+                             const blink::WebInputEvent& event) override;
+   bool ShouldIgnoreWebInputEvents(const blink::WebInputEvent& event) override;
+   bool ShouldIgnoreInputEvents() override;
++  // PATCH: input-lock
++  bool IsUserInputLocked() override;
+   void OnIgnoredUIEvent() override;
+   void Activate() override;
+   void ShowCreatedWidget(int process_id,
+@@ -2367,6 +2373,8 @@ class CONTENT_EXPORT WebContentsImpl
+   // Counts the number of outstanding requests to ignore input events. They will
+   // not be sent when this is greater than zero.
+   int ignore_input_events_count_ = 0;
++  // PATCH: input-lock -- drop human input at the platform view layer.
++  bool user_input_locked_ = false;
+   // Counts the number of outstanding requests to ignore a11y input events. They
+   // will not be sent when this is greater than zero.
+   int ignore_a11y_input_count_ = 0;
+diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
+index ddbf6ee175..6bca350c71 100644
+--- a/content/browser/web_contents/web_contents_view_aura.cc
++++ b/content/browser/web_contents/web_contents_view_aura.cc
+@@ -1429,7 +1429,8 @@ void WebContentsViewAura::DragEnteredCallback(
+ }
+ 
+ void WebContentsViewAura::OnDragEntered(const ui::DropTargetEvent& event) {
+-  if (web_contents_->ShouldIgnoreInputEvents()) {
++  if (web_contents_->ShouldIgnoreInputEvents() ||
++      web_contents_->IsUserInputLocked()) {  // PATCH: input-lock
+     return;
+   }
+ 
+@@ -1523,7 +1524,8 @@ void WebContentsViewAura::DragUpdatedCallback(
+ 
+ aura::client::DragUpdateInfo WebContentsViewAura::OnDragUpdated(
+     const ui::DropTargetEvent& event) {
+-  if (web_contents_->ShouldIgnoreInputEvents()) {
++  if (web_contents_->ShouldIgnoreInputEvents() ||
++      web_contents_->IsUserInputLocked()) {  // PATCH: input-lock
+     return aura::client::DragUpdateInfo();
+   }
+   aura::client::DragUpdateInfo drag_info;
+@@ -1554,7 +1556,8 @@ aura::client::DragUpdateInfo WebContentsViewAura::OnDragUpdated(
+ }
+ 
+ void WebContentsViewAura::OnDragExited() {
+-  if (web_contents_->ShouldIgnoreInputEvents()) {
++  if (web_contents_->ShouldIgnoreInputEvents() ||
++      web_contents_->IsUserInputLocked()) {  // PATCH: input-lock
+     // Don't compute the results of exiting, but clean up the flag to avoid
+     // hanging the renderer process. See crbug.com/434130454.
+     drag_in_progress_ = false;
+@@ -1752,7 +1755,8 @@ void WebContentsViewAura::GotModifiedDropDataFromDelegate(
+ 
+ aura::client::DragDropDelegate::DropCallback
+ WebContentsViewAura::GetDropCallback(const ui::DropTargetEvent& event) {
+-  if (web_contents_->ShouldIgnoreInputEvents())
++  if (web_contents_->ShouldIgnoreInputEvents() ||
++      web_contents_->IsUserInputLocked())  // PATCH: input-lock
+     return base::DoNothing();
+   base::ScopedClosureRunner drag_exit(base::BindOnce(
+       &WebContentsViewAura::CompleteDragExit, weak_ptr_factory_.GetWeakPtr()));
+diff --git a/third_party/blink/public/devtools_protocol/domains/Input.pdl b/third_party/blink/public/devtools_protocol/domains/Input.pdl
+index 815bf7c414..b4adafd7aa 100644
+--- a/third_party/blink/public/devtools_protocol/domains/Input.pdl
++++ b/third_party/blink/public/devtools_protocol/domains/Input.pdl
+@@ -262,6 +262,13 @@ domain Input
+       # Ignores input events processing when set to true.
+       boolean ignore
+ 
++  # PATCH: input-lock -- locks/unlocks real (human) input while keeping
++  # CDP-injected input working. Unlike setIgnoreInputEvents, this does not
++  # drop Input.dispatch* / insertText / synthetic gestures.
++  command setUserInputLocked
++    parameters
++      boolean locked
++
+   # Prevents default drag and drop behavior and instead emits `Input.dragIntercepted` events.
+   # Drag and drop behavior can be directly controlled via `Input.dispatchDragEvent`.
+   experimental command setInterceptDrags
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index dc9e636c1a..8bdb44f0c2 100644
+--- a/content/browser/web_contents/web_contents_impl.cc
++++ b/content/browser/web_contents/web_contents_impl.cc
+@@ -3052,6 +3052,11 @@ bool WebContentsImpl::ShouldIgnoreInputEventsForTesting() {
+   return ShouldIgnoreInputEvents();
+ }
+ 
++// PATCH: input-lock
++void WebContentsImpl::SetUserInputLocked(bool locked) {
++  user_input_locked_ = locked;
++}
++
+ bool WebContentsImpl::ShouldIgnoreA11yInputEventsForTesting() {
+   return ShouldIgnoreA11yInputEvents();
+ }
+@@ -10255,6 +10254,18 @@ bool WebContentsImpl::ShouldIgnoreInputEvents() {
+   return web_contents->ShouldIgnoreInputEvents();
+ }
+ 
++// PATCH: input-lock -- also honor the outer WebContents lock (inner guests).
++bool WebContentsImpl::IsUserInputLocked() {
++  if (user_input_locked_) {
++    return true;
++  }
++  WebContentsImpl* web_contents = GetOuterWebContents();
++  if (!web_contents) {
++    return false;
++  }
++  return web_contents->IsUserInputLocked();
++}
++
+ bool WebContentsImpl::ShouldIgnoreA11yInputEvents() {
+   if (ignore_a11y_input_count_ > 0) {
+     return true;
