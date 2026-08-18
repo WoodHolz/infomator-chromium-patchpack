@@ -6,14 +6,21 @@
 python tests/test_input_lock.py "E:\path\to\chrome.exe"
 ```
 
-Expected result:
+Expected:
 
 - `PASS: Input.setUserInputLocked behavior verified`
 
-## 2) Manual verification (recommended)
+## 2) Visual / manual bench (recommended)
 
-You can also reuse your local manual bench script to validate hover/drag and native control-panel workflow.
-When this patchpack becomes an independent repo, copy your validated manual bench script into:
+双窗口：Chrome 测试页做人的 click / hover / 拖拽 / 键盘；原生 Tk 控制面板做锁定开关和 CDP 模拟。
 
-- `tests/manual_input_lock_bench.py`
+```bash
+python tests/manual_input_lock_bench.py "E:\path\to\chrome.exe"
+```
 
+步骤：
+
+1. 未锁定基线：在测试页操作，trusted* 应增加
+2. 锁定后：测试页人工操作应被阻断
+3. 锁定下：在 Tk 面板点 CDP Hover / Click / Key，测试页仍应响应
+4. 解锁后：测试页人工操作恢复

@@ -34,3 +34,17 @@ python tools/apply_series.py ^
 
 `patch -p1 --ignore-whitespace -i <patch> -d <source-tree> --no-backup-if-mismatch`
 
+## 验证
+
+自动：
+
+```bash
+python tests/test_input_lock.py "E:\path\to\chrome.exe"
+```
+
+可视化（Tk 控制面板 + Chrome 测试页）：
+
+```bash
+python tests/manual_input_lock_bench.py "E:\path\to\chrome.exe"
+```
+
