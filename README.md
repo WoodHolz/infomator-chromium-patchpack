@@ -1,50 +1,53 @@
+**English** | [中文](README.zh-CN.md)
+
 # infomator-chromium-patchpack
 
-单一来源的补丁仓库：只维护你们自己的补丁（当前仅 `infomator-kernel-input-lock`）。
+Single source of Infomator-owned Chromium patches. This repo currently ships only `infomator-kernel-input-lock`.
 
-下游构建方（Windows/Linux/mac）通常流程是：
-1. 先用 `ungoogled-chromium` 自己的基础 patches（含 windows 兼容补丁）构建源码
-2. 再应用上游维护的 `fingerprint-chromium` 补丁集
-3. 最后应用本仓库的补丁序列（`series.windows` / 未来可扩展 linux/darwin）
-4. 编译得到浏览器产物
+Downstream builders (Windows / Linux / macOS) apply patches in this order:
 
-本仓库不包含 `ungoogled-chromium/windows/*.patch` 等基础补丁。
+1. `ungoogled-chromium` base patches (including platform-specific Windows patches)
+2. Upstream `fingerprint-chromium` extra fingerprint patches
+3. This repo’s series (`series.windows` today; linux/darwin series can be added later)
+4. Compile the browser
 
-## 目录约定
+This repo does **not** vendor `ungoogled-chromium` or `fingerprint-chromium` patch files.
 
-当前仓库内应包含：
+## Layout
 
 - `patches/infomator-kernel-input-lock/0001-input-lock.patch`
-- `series.windows`（补丁顺序）
+- `series.windows` — Infomator patches only, applied **after** fingerprint
+- `tools/apply_series.py` — GNU `patch -p1` driver
+- `docs/windows-build.md` — full Windows rebuild steps
+- `docs/integration.md` — patch order and runtime expectations
+- `tests/` — automated lock test and visual Tk bench
 
-说明：
+## Apply this patchpack (Windows)
 
-- `fingerprint-chromium` 补丁内容本体不放在这里，由其上游项目维护
-- `series.windows` 只描述“在 fingerprint 之后，额外应用哪些 infomator 自有补丁”
+The source tree must already have ungoogled + Windows patches **and** the upstream fingerprint set. Apply this series **before domain substitution**.
 
-## 应用补丁（Windows 示例）
-
-```bash
-python tools/apply_series.py ^
-  --series series.windows ^
-  --target "E:\path\to\ungoogled-chromium\build\src"
+```cmd
+cd E:\infomator-chromium-patchpack
+set PATCH_BIN=E:\ungoogled-chromium-windows\build\src\third_party\git\usr\bin\patch.exe
+python tools\apply_series.py --series series.windows --target E:\ungoogled-chromium-windows\build\src
 ```
 
-底层使用 `GNU patch`，等价于：
+Equivalent GNU patch flags:
 
 `patch -p1 --ignore-whitespace -i <patch> -d <source-tree> --no-backup-if-mismatch`
 
-## 验证
+Full clone / fingerprint / `build.py --ci` details: [Windows build](docs/windows-build.md).
 
-自动：
+## Verify
 
-```bash
-python tests/test_input_lock.py "E:\path\to\chrome.exe"
+Automated:
+
+```cmd
+python tests\test_input_lock.py "E:\path\to\chrome.exe"
 ```
 
-可视化（Tk 控制面板 + Chrome 测试页）：
+Visual (Chrome test page + native Tk lock / CDP panel):
 
-```bash
-python tests/manual_input_lock_bench.py "E:\path\to\chrome.exe"
+```cmd
+python tests\manual_input_lock_bench.py "E:\path\to\chrome.exe"
 ```
-

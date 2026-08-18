@@ -1,34 +1,37 @@
+**English** | [中文](integration.zh-CN.md)
+
 # Integration Guide
 
-## Patch Order (must keep)
-
-Apply patches in this exact order:
+## Patch order (must keep)
 
 1. `ungoogled-chromium` base patches (platform-specific included)
-2. upstream `fingerprint-chromium` patch set
-3. this repo's `series.windows` (currently only `infomator-kernel-input-lock`)
+2. Upstream `fingerprint-chromium` `extra/fingerprint` set
+3. This repo’s `series.windows` (currently only `infomator-kernel-input-lock`)
+4. Domain substitution, then compile
 
-If order is changed, input-lock behavior or fingerprint behavior may break.
+If this order changes, input-lock or fingerprint behavior may break.
 
-## Windows Example
+Windows clone / `build.py` / fingerprint file list: [Windows build](windows-build.md).
 
-```bash
-# 1) apply ungoogled patches (your existing process)
-# 2) apply fingerprint-chromium patches (upstream process)
+## Apply Infomator series
 
-# 3) apply infomator patchpack
-python tools/apply_series.py ^
-  --series series.windows ^
-  --target "E:\path\to\ungoogled-chromium\build\src"
+```cmd
+set PATCH_BIN=E:\ungoogled-chromium-windows\build\src\third_party\git\usr\bin\patch.exe
+python tools\apply_series.py --series series.windows --target E:\ungoogled-chromium-windows\build\src
 ```
 
-## Runtime Expectation
+Do this **before** domain substitution.
 
-After patch application and build:
+## Runtime expectation
 
-- Human input on page is blocked while lock is active
+After patches and build:
+
+- Human input on the page is blocked while lock is active
 - CDP `Input.dispatch*` still works while lock is active
 - Human input is restored after unlock
+- Agent command: `Input.setUserInputLocked({locked: true|false})`
+- Do **not** use `Input.setIgnoreInputEvents` — that also drops CDP input
+- Unlock is **not** done in `InputHandler::Disable()` (desktop-client detaches CDP after send)
 
 ## Notes
 
