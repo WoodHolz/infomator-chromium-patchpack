@@ -1,0 +1,6 @@
+# Apply this after ungoogled-chromium base patches and after the
+# official fingerprint-chromium patch set maintained upstream.
+# 0001 is shared (CDP + WebContents flag + Aura). 0002 is the Cocoa view
+# layer so human input is actually dropped on macOS.
+patches/infomator-kernel-input-lock/0001-input-lock.patch
+patches/infomator-kernel-input-lock/0002-input-lock-macos.patch

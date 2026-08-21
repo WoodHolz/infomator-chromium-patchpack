@@ -1,0 +1,288 @@
+# PATCH: input-lock macOS Cocoa (infomator-kernel-input-lock)
+# Drops human NSView/IME/drag input while keeping CDP Input.* working.
+# Apply after 0001-input-lock.patch (shared CDP/WebContents flag).
+# Applies after ungoogled + fingerprint + macOS patches, before domain substitution.
+
+diff --git a/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h b/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h
+--- a/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h
++++ b/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h
+@@ -63,6 +63,12 @@ class RenderWidgetHostNSViewHostHelper {
+   // Set the NSWindow that will be the accessibility parent of the NSView.
+   virtual void SetAccessibilityWindow(NSWindow* window) = 0;
+ 
++  // PATCH: input-lock -- true when human (OS/NSView) input should be dropped
++  // while CDP-injected input continues to work. Dummy helpers keep the
++  // default. RenderWidgetHostViewMac overrides this from the WebContents flag.
++  virtual bool IsUserInputLocked() { return false; }
++
+   // Forward a keyboard event to the RenderWidgetHost that is currently handling
+   // the key-down event.
+   virtual void ForwardKeyboardEvent(
+diff --git a/content/browser/renderer_host/render_widget_host_view_mac.h b/content/browser/renderer_host/render_widget_host_view_mac.h
+--- a/content/browser/renderer_host/render_widget_host_view_mac.h
++++ b/content/browser/renderer_host/render_widget_host_view_mac.h
+@@ -326,6 +326,8 @@ class CONTENT_EXPORT RenderWidgetHostViewMac
+   }
+ 
+   // RenderWidgetHostNSViewHostHelper implementation.
++  // PATCH: input-lock
++  bool IsUserInputLocked() override;
+   id GetAccessibilityElement() override;
+   id GetRootBrowserAccessibilityElement() override;
+   id GetFocusedBrowserAccessibilityElement() override;
+diff --git a/content/browser/renderer_host/render_widget_host_view_mac.mm b/content/browser/renderer_host/render_widget_host_view_mac.mm
+--- a/content/browser/renderer_host/render_widget_host_view_mac.mm
++++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
+@@ -1700,6 +1700,14 @@ void RenderWidgetHostViewMac::ShowSharePicker(
+ // RenderWidgetHostNSViewHostHelper and mojom::RenderWidgetHostNSViewHost
+ // implementation:
+ 
++// PATCH: input-lock
++bool RenderWidgetHostViewMac::IsUserInputLocked() {
++  return host() && host()->delegate() &&
++         host()->delegate()->IsUserInputLocked();
++}
++
+ id RenderWidgetHostViewMac::GetAccessibilityElement() {
+   return nil;
+ }
+diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
+--- a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
++++ b/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
+@@ -182,6 +182,8 @@ void ExtractUnderlines(NSAttributedString* string,
+     BOOL automaticDashSubstitutionEnabled;
+ 
+ - (void)keyEvent:(NSEvent*)theEvent wasKeyEquivalent:(BOOL)equiv;
++// PATCH: input-lock
++- (BOOL)shouldDropUserInput;
+ - (void)windowDidChangeScreenOrBackingProperties:(NSNotification*)notification;
+ - (void)windowChangedGlobalFrame:(NSNotification*)notification;
+ - (void)windowDidBecomeKey:(NSNotification*)notification;
+@@ -912,6 +914,13 @@ - (void)setShowingContextMenu:(BOOL)showing {
+   _hostHelper->ForwardMouseEvent(webEvent);
+ }
+ 
++// PATCH: input-lock -- human-originated NSView input only; CDP never reaches
++// Cocoa. RenderWidgetHostViewMac reads the WebContents flag via the helper.
++- (BOOL)shouldDropUserInput {
++  return _hostHelper && _hostHelper->IsUserInputLocked();
++}
++
+ - (BOOL)shouldIgnoreMouseEvent:(NSEvent*)theEvent {
+   NSWindow* window = self.window;
+   if (theEvent.type == NSEventTypeMouseMoved) {
+@@ -968,6 +977,11 @@ - (BOOL)shouldIgnoreMouseEvent:(NSEvent*)theEvent {
+ 
+ - (void)mouseEvent:(NSEvent*)theEvent {
+   TRACE_EVENT0("browser", "RenderWidgetHostViewCocoa::mouseEvent");
++  // PATCH: input-lock -- includes move/enter/exit (hover).
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+ 
+   _textSelectionChangedForContextualMenu = NO;
+   if ((theEvent.type == NSEventTypeLeftMouseDown &&
+@@ -1174,6 +1188,11 @@ - (BOOL)performKeyEquivalent:(NSEvent*)theEvent {
+     return NO;
+   }
+ 
++  // PATCH: input-lock -- swallow Cmd-equivalents that would go to the page.
++  if ([self shouldDropUserInput]) {
++    return YES;
++  }
++
+   // If the event is reserved by the system, do not pass it to web content.
+   // If the user changes the system hotkey mapping after Chrome has been
+   // launched, it is possible that a formerly reserved system hotkey is no
+@@ -1208,6 +1227,12 @@ - (BOOL)_wantsKeyDownForEvent:(NSEvent*)event {
+ }
+ 
+ - (EventHandled)keyEvent:(NSEvent*)theEvent {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return kEventHandled;
++  }
++
+   if (_responderDelegate &&
+       [_responderDelegate respondsToSelector:@selector(handleEvent:)]) {
+     BOOL handled = [_responderDelegate handleEvent:theEvent];
+@@ -1222,6 +1247,13 @@ - (EventHandled)keyEvent:(NSEvent*)theEvent {
+ - (void)keyEvent:(NSEvent*)theEvent wasKeyEquivalent:(BOOL)equiv {
+   TRACE_EVENT1("browser", "RenderWidgetHostViewCocoa::keyEvent", "WindowNum",
+                [[self window] windowNumber]);
++  // PATCH: input-lock -- cancel IME rather than commit if locked mid-compose.
++  if ([self shouldDropUserInput]) {
++    if (_hasMarkedText) {
++      [self cancelComposition];
++    }
++    return;
++  }
+   NSEventType eventType = [theEvent type];
+   NSEventModifierFlags modifierFlags = [theEvent modifierFlags];
+   int keyCode = [theEvent keyCode];
+@@ -1548,22 +1580,42 @@ - (void)shortCircuitScrollWheelEvent:(NSEvent*)event {
+ }
+ 
+ - (void)touchesMovedWithEvent:(NSEvent*)event {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   [_responderDelegate touchesMovedWithEvent:event];
+ }
+ 
+ - (void)touchesBeganWithEvent:(NSEvent*)event {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   [_responderDelegate touchesBeganWithEvent:event];
+ }
+ 
+ - (void)touchesCancelledWithEvent:(NSEvent*)event {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   [_responderDelegate touchesCancelledWithEvent:event];
+ }
+ 
+ - (void)touchesEndedWithEvent:(NSEvent*)event {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   [_responderDelegate touchesEndedWithEvent:event];
+ }
+ 
+ - (void)smartMagnifyWithEvent:(NSEvent*)event {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   const WebGestureEvent& smartMagnifyEvent =
+       WebGestureEventBuilder::Build(event, self);
+   _hostHelper->SmartMagnifyEvent(smartMagnifyEvent);
+@@ -1576,12 +1628,20 @@ - (void)showLookUpDictionaryOverlayFromRange:(NSRange)range {
+ // This is invoked only on 10.8 or newer when the user taps a word using
+ // three fingers.
+ - (void)quickLookWithEvent:(NSEvent*)event {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   NSPoint point = [self convertPoint:[event locationInWindow] fromView:nil];
+   gfx::PointF rootPoint(point.x, NSHeight([self frame]) - point.y);
+   _host->LookUpDictionaryOverlayAtPoint(rootPoint);
+ }
+ 
+ - (void)scrollWheel:(NSEvent*)event {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   // Consult with the delegate to see if it wants to handle the event. If the
+   // delegate has handled the event, it takes priority over the page scrolling.
+   if ([_responderDelegate respondsToSelector:@selector(handleEvent:)]) {
+@@ -1618,6 +1678,12 @@ - (void)magnifyWithEvent:(NSEvent*)event {
+ - (void)magnifyWithEvent:(NSEvent*)event
+     isSyntheticallyInjected:(BOOL)injected {
+   if (event.phase == NSEventPhaseMayBegin) {
+     return;
+   }
++  // PATCH: input-lock -- skip human pinch; allow synthetic (test) injection.
++  if (!injected && [self shouldDropUserInput]) {
++    return;
++  }
+ 
+   WebGestureEvent gestureEvent = WebGestureEventBuilder::Build(event, self);
+   _hostHelper->PinchEvent(gestureEvent, injected);
+@@ -2246,6 +2312,12 @@ - (BOOL)hasMarkedText {
+ }
+ 
+ - (void)unmarkText {
++  // PATCH: input-lock -- cancel rather than finish composing if locked.
++  if ([self shouldDropUserInput]) {
++    [self cancelComposition];
++    return;
++  }
+   // Delete the composition node of the renderer and finish an ongoing
+   // composition.
+   // It seems an input method calls the setMarkedText method and set an empty
+@@ -2268,6 +2340,12 @@ - (void)unmarkText {
+ - (void)setMarkedText:(id)string
+         selectedRange:(NSRange)newSelRange
+      replacementRange:(NSRange)replacementRange {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    [self cancelComposition];
++    return;
++  }
+   // An input method updates the composition string.
+   // We send the given text and range to the renderer so it can update the
+   // composition node of WebKit.
+@@ -2359,6 +2437,12 @@ - (void)setMarkedText:(id)string
+ }
+ 
+ - (void)doCommandBySelector:(SEL)selector {
++  // PATCH: input-lock
++  if ([self shouldDropUserInput]) {
++    return;
++  }
+   // An input method calls this function to dispatch an editing command to be
+   // handled by this view.
+   if (selector == @selector(noop:))
+@@ -2414,6 +2498,12 @@ - (void)doCommandBySelector:(SEL)selector {
+ }
+ 
+ - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
++  // PATCH: input-lock -- covers IME commit, emoji palette, dictation.
++  if ([self shouldDropUserInput]) {
++    [self cancelComposition];
++    return;
++  }
+   // An input method has characters to be inserted.
+   // Same as Linux, Mac calls this method not only:
+   // * when an input method finishes composing text, but also;
+diff --git a/content/browser/web_contents/web_drag_dest_mac.mm b/content/browser/web_contents/web_drag_dest_mac.mm
+--- a/content/browser/web_contents/web_drag_dest_mac.mm
++++ b/content/browser/web_contents/web_drag_dest_mac.mm
+@@ -207,7 +207,8 @@ - (void)setDropData:(const DropData&)dropData {
+ }
+ 
+ - (NSDragOperation)draggingEntered:(const DraggingInfo*)info {
+-  if (_webContents->ShouldIgnoreInputEvents())
++  if (_webContents->ShouldIgnoreInputEvents() ||
++      _webContents->IsUserInputLocked())  // PATCH: input-lock
+     return NSDragOperationNone;
+ 
+   // Save off the RVH so we can tell if it changes during a drag. If it does,
+@@ -269,7 +270,8 @@ - (NSDragOperation)draggingEntered:(const DraggingInfo*)info {
+ }
+ 
+ - (void)draggingExited {
+-  if (_webContents->ShouldIgnoreInputEvents())
++  if (_webContents->ShouldIgnoreInputEvents() ||
++      _webContents->IsUserInputLocked())  // PATCH: input-lock
+     return;
+ 
+   _webContents->PreHandleDragExit();
+@@ -295,7 +297,8 @@ - (void)draggingExited {
+ }
+ 
+ - (NSDragOperation)draggingUpdated:(const DraggingInfo*)info {
+-  if (_webContents->ShouldIgnoreInputEvents())
++  if (_webContents->ShouldIgnoreInputEvents() ||
++      _webContents->IsUserInputLocked())  // PATCH: input-lock
+     return NSDragOperationNone;
+ 
+   if (_canceled) {
+@@ -360,7 +363,8 @@ - (BOOL)performDragOperation:(const DraggingInfo*)info
+  withWebContentsViewDelegate:
+  (content::WebContentsViewDelegate*)webContentsViewDelegate {
+-  if (_webContents->ShouldIgnoreInputEvents())
++  if (_webContents->ShouldIgnoreInputEvents() ||
++      _webContents->IsUserInputLocked())  // PATCH: input-lock
+     return NO;
+ 
+   gfx::PointF transformedPt;
