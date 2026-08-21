@@ -21,9 +21,9 @@ index c78943bf0f..e31d4876e9 100644
 +  return Response::Success();
 +}
 +
-+void InputHandler::SynthesizePinchGesture(
-+    double x,
-+    double y,
+ void InputHandler::SynthesizePinchGesture(
+     double x,
+     double y,
 diff --git a/content/browser/devtools/protocol/input_handler.h b/content/browser/devtools/protocol/input_handler.h
 index 4c25a8c1c2..d4b8dbaf56 100644
 --- a/content/browser/devtools/protocol/input_handler.h

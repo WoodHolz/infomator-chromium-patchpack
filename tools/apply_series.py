@@ -58,7 +58,7 @@ def main() -> int:
   series_root = args.series.parent.resolve()
 
   for i, rel_patch in enumerate(patches, start=1):
-    patch_path = rel_patch
+    patch_path = Path(rel_patch)
     if not patch_path.is_absolute():
       patch_path = series_root / patch_path
     patch_path = patch_path.resolve()
