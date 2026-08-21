@@ -6,7 +6,7 @@
 diff --git a/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h b/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h
 --- a/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h
 +++ b/content/app_shim_remote_cocoa/render_widget_host_ns_view_host_helper.h
-@@ -63,6 +63,12 @@ class RenderWidgetHostNSViewHostHelper {
+@@ -63,6 +63,11 @@ class RenderWidgetHostNSViewHostHelper {
    // Set the NSWindow that will be the accessibility parent of the NSView.
    virtual void SetAccessibilityWindow(NSWindow* window) = 0;
  
@@ -33,7 +33,7 @@ diff --git a/content/browser/renderer_host/render_widget_host_view_mac.h b/conte
 diff --git a/content/browser/renderer_host/render_widget_host_view_mac.mm b/content/browser/renderer_host/render_widget_host_view_mac.mm
 --- a/content/browser/renderer_host/render_widget_host_view_mac.mm
 +++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
-@@ -1700,6 +1700,14 @@ void RenderWidgetHostViewMac::ShowSharePicker(
+@@ -1700,6 +1700,12 @@ void RenderWidgetHostViewMac::ShowSharePicker(
  // RenderWidgetHostNSViewHostHelper and mojom::RenderWidgetHostNSViewHost
  // implementation:
  
@@ -58,7 +58,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
  - (void)windowDidChangeScreenOrBackingProperties:(NSNotification*)notification;
  - (void)windowChangedGlobalFrame:(NSNotification*)notification;
  - (void)windowDidBecomeKey:(NSNotification*)notification;
-@@ -912,6 +914,13 @@ - (void)setShowingContextMenu:(BOOL)showing {
+@@ -912,6 +914,12 @@ - (void)setShowingContextMenu:(BOOL)showing {
    _hostHelper->ForwardMouseEvent(webEvent);
  }
  
@@ -71,7 +71,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
  - (BOOL)shouldIgnoreMouseEvent:(NSEvent*)theEvent {
    NSWindow* window = self.window;
    if (theEvent.type == NSEventTypeMouseMoved) {
-@@ -968,6 +977,11 @@ - (BOOL)shouldIgnoreMouseEvent:(NSEvent*)theEvent {
+@@ -968,6 +977,10 @@ - (BOOL)shouldIgnoreMouseEvent:(NSEvent*)theEvent {
  
  - (void)mouseEvent:(NSEvent*)theEvent {
    TRACE_EVENT0("browser", "RenderWidgetHostViewCocoa::mouseEvent");
@@ -94,7 +94,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
    // If the event is reserved by the system, do not pass it to web content.
    // If the user changes the system hotkey mapping after Chrome has been
    // launched, it is possible that a formerly reserved system hotkey is no
-@@ -1208,6 +1227,12 @@ - (BOOL)_wantsKeyDownForEvent:(NSEvent*)event {
+@@ -1208,6 +1227,11 @@ - (BOOL)_wantsKeyDownForEvent:(NSEvent*)event {
  }
  
  - (EventHandled)keyEvent:(NSEvent*)theEvent {
@@ -184,7 +184,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
    // Consult with the delegate to see if it wants to handle the event. If the
    // delegate has handled the event, it takes priority over the page scrolling.
    if ([_responderDelegate respondsToSelector:@selector(handleEvent:)]) {
-@@ -1618,6 +1678,12 @@ - (void)magnifyWithEvent:(NSEvent*)event {
+@@ -1618,8 +1678,12 @@ - (void)magnifyWithEvent:(NSEvent*)event {
  - (void)magnifyWithEvent:(NSEvent*)event
      isSyntheticallyInjected:(BOOL)injected {
    if (event.phase == NSEventPhaseMayBegin) {
@@ -197,7 +197,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
  
    WebGestureEvent gestureEvent = WebGestureEventBuilder::Build(event, self);
    _hostHelper->PinchEvent(gestureEvent, injected);
-@@ -2246,6 +2312,12 @@ - (BOOL)hasMarkedText {
+@@ -2246,6 +2312,11 @@ - (BOOL)hasMarkedText {
  }
  
  - (void)unmarkText {
@@ -209,7 +209,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
    // Delete the composition node of the renderer and finish an ongoing
    // composition.
    // It seems an input method calls the setMarkedText method and set an empty
-@@ -2268,6 +2340,12 @@ - (void)unmarkText {
+@@ -2268,6 +2340,11 @@ - (void)unmarkText {
  - (void)setMarkedText:(id)string
          selectedRange:(NSRange)newSelRange
       replacementRange:(NSRange)replacementRange {
@@ -221,7 +221,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
    // An input method updates the composition string.
    // We send the given text and range to the renderer so it can update the
    // composition node of WebKit.
-@@ -2359,6 +2437,12 @@ - (void)setMarkedText:(id)string
+@@ -2359,6 +2437,10 @@ - (void)setMarkedText:(id)string
  }
  
  - (void)doCommandBySelector:(SEL)selector {
@@ -232,7 +232,7 @@ diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/co
    // An input method calls this function to dispatch an editing command to be
    // handled by this view.
    if (selector == @selector(noop:))
-@@ -2414,6 +2498,12 @@ - (void)doCommandBySelector:(SEL)selector {
+@@ -2414,6 +2498,11 @@ - (void)doCommandBySelector:(SEL)selector {
  }
  
  - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
@@ -277,7 +277,7 @@ diff --git a/content/browser/web_contents/web_drag_dest_mac.mm b/content/browser
      return NSDragOperationNone;
  
    if (_canceled) {
-@@ -360,7 +363,8 @@ - (BOOL)performDragOperation:(const DraggingInfo*)info
+@@ -360,6 +363,7 @@ - (BOOL)performDragOperation:(const DraggingInfo*)info
   withWebContentsViewDelegate:
   (content::WebContentsViewDelegate*)webContentsViewDelegate {
 -  if (_webContents->ShouldIgnoreInputEvents())
